@@ -6,7 +6,7 @@ out-of-range values are rejected, which keeps every run reproducible from
 its execution trace.
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ToolParams(BaseModel):
@@ -53,3 +53,38 @@ class GroundingParams(ToolParams):
     tile_size: int = Field(default=768, ge=256, le=2048)
     max_tiles: int = Field(default=16, ge=1, le=64)
     max_detections: int = Field(default=50, ge=1, le=500)
+
+
+class SARParams(ToolParams):
+    speckle_window: int = Field(
+        default=5,
+        ge=3,
+        le=11,
+        description="Side of the square speckle-filter window, in pixels (odd).",
+    )
+    min_contrast_db: float = Field(
+        default=5.0,
+        ge=2.0,
+        le=20.0,
+        description="How much darker than the rest of the scene a surface "
+        "must be to be reported as low-backscatter (water-like).",
+    )
+    min_region_px: int = Field(default=50, ge=1, le=100_000)
+    max_regions: int = Field(default=20, ge=1, le=200)
+    cfar_k: float = Field(
+        default=5.0,
+        ge=3.0,
+        le=10.0,
+        description="Standard deviations above the local background a "
+        "bright target must reach.",
+    )
+    min_target_px: int = Field(default=3, ge=1, le=1_000)
+    max_targets: int = Field(default=50, ge=1, le=500)
+
+    @field_validator("speckle_window")
+    @classmethod
+    def _window_must_be_odd(cls, value: int) -> int:
+        if value % 2 == 0:
+            raise ValueError("speckle_window must be odd")
+
+        return value

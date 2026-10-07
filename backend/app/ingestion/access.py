@@ -11,6 +11,7 @@ import os
 import numpy as np
 from PIL import Image
 
+from backend.app.ingestion.info import RasterInfo
 from backend.app.ingestion.store import UPLOAD_DIR, resolve_upload_path
 
 
@@ -31,6 +32,16 @@ class RasterAccess:
         from backend.app.ingestion.raster import load_rgb_image
 
         return load_rgb_image(path, max_side=max_side)
+
+    def read_info(self, path: str) -> RasterInfo | None:
+        """Ingestion metadata (modality, bands, ...); None if unreadable."""
+
+        from backend.app.ingestion.raster import read_raster_info
+
+        try:
+            return read_raster_info(path)
+        except Exception:
+            return None
 
     def pixel_area_m2(self, path: str) -> float | None:
         from backend.app.ingestion.raster import pixel_area_m2

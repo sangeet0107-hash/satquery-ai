@@ -115,3 +115,44 @@ def test_unknown_report_and_compatibility(client):
 
     assert pair["co_registered"] is True
     assert pair["pair_type"] == "BITEMPORAL"
+
+
+def _sar_tif_bytes(data):
+    with MemoryFile() as memory:
+        with memory.open(
+            driver="GTiff", height=data.shape[0], width=data.shape[1],
+            count=1, dtype="float32", crs="EPSG:32643",
+            transform=from_origin(500000.0, 3100000.0, 10.0, 10.0),
+        ) as dst:
+            dst.write(data.astype("float32"), 1)
+
+        return memory.read()
+
+
+def test_sar_water_mapping_end_to_end(client):
+    rng = np.random.default_rng(0)
+    mean = np.full((128, 128), 0.1)
+    mean[32:96, 16:80] *= 10 ** (-12 / 10)  # a lake, 12 dB darker than land
+    data = mean * rng.gamma(4, 0.25, mean.shape)
+
+    upload = client.post(
+        "/inspect-raster",
+        files={"file": ("s1_vv_20240101.tif", _sar_tif_bytes(data), "image/tiff")},
+    )
+    assert upload.status_code == 200, upload.text
+    assert upload.json()["metadata"]["modality"] == "SAR"
+
+    body = client.post(
+        "/analyze",
+        json={
+            "query": "Where is the water in this SAR image?",
+            "image_id": "s1_vv_20240101.tif",
+        },
+    ).json()
+
+    assert body["task"] == "SAR"
+    assert body["answer"].startswith("Low-backscatter (water-like) surfaces cover 25")
+    assert "hectares" in body["answer"]  # 4,096 px x 100 sq. m
+    assert body["evidence"][0]["kind"] == "mask"
+    assert client.get(f"/preview/{body['overlay']}").status_code == 200
+    assert "sar-analysis" in client.get(f"/report/{body['analysis_id']}").text

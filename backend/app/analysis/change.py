@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy import ndimage
 
+from backend.app.analysis.masks import SQUARE, clean_mask, otsu_threshold
+
 # MAD -> standard deviation for normally distributed data.
 _MAD_TO_SIGMA = 1.4826
 
@@ -80,31 +82,6 @@ def _robust_standardise(band: np.ndarray, valid: np.ndarray) -> np.ndarray:
         spread = 1.0
 
     return (band - centre) / spread
-
-
-def _otsu_threshold(values: np.ndarray, bins: int = 256) -> float:
-    low, high = float(values.min()), float(values.max())
-
-    if high <= low:
-        return low
-
-    hist, edges = np.histogram(values, bins=bins, range=(low, high))
-    hist = hist.astype("float64")
-    centres = (edges[:-1] + edges[1:]) / 2
-
-    weight_low = np.cumsum(hist)
-    weight_high = weight_low[-1] - weight_low
-    sum_low = np.cumsum(hist * centres)
-    total = sum_low[-1]
-
-    with np.errstate(divide="ignore", invalid="ignore"):
-        mean_low = sum_low / weight_low
-        mean_high = (total - sum_low) / weight_high
-        between = weight_low * weight_high * (mean_low - mean_high) ** 2
-
-    between = np.nan_to_num(between, nan=0.0)
-
-    return float(centres[int(np.argmax(between))])
 
 
 def _min_shift_magnitude(
@@ -184,11 +161,10 @@ def detect_change(
 
     threshold = max(
         centre + sensitivity * sigma,
-        _otsu_threshold(values),
+        otsu_threshold(values),
         _ABSOLUTE_FLOOR,
     )
 
-    square = np.ones((3, 3), dtype=bool)
     raw = (magnitude > threshold) & valid
 
     if radius > 0:
@@ -203,38 +179,15 @@ def detect_change(
         # real changes; grow back (one pixel further, to recover corners)
         # into pixels the direct comparison flags.
         grown = ndimage.binary_dilation(
-            raw, structure=square, iterations=radius + 1
+            raw, structure=SQUARE, iterations=radius + 1
         )
         raw = grown & (direct > threshold) & valid
 
     raw_fraction = float(raw.sum() / valid.sum())
 
-    # Opening removes speckle, closing fills pinholes. Erosions treat the
-    # area outside the image as set, so regions touching the image edge
-    # are not shaved.
-    cleaned = ndimage.binary_dilation(
-        ndimage.binary_erosion(raw, structure=square, border_value=1),
-        structure=square,
-    )
-    cleaned = ndimage.binary_erosion(
-        ndimage.binary_dilation(cleaned, structure=square),
-        structure=square,
-        border_value=1,
-    ) & valid
-
-    labels, count = ndimage.label(cleaned, structure=square)
+    cleaned, labels, count, areas = clean_mask(raw, valid, min_region_px)
 
     regions: list[ChangeRegion] = []
-
-    if count:
-        areas = np.bincount(labels.ravel(), minlength=count + 1)
-        too_small = np.flatnonzero(areas < min_region_px)
-        too_small = too_small[too_small != 0]
-
-        if too_small.size:
-            cleaned[np.isin(labels, too_small)] = False
-            labels, count = ndimage.label(cleaned, structure=square)
-            areas = np.bincount(labels.ravel(), minlength=count + 1)
 
     if count:
         index = np.arange(1, count + 1)

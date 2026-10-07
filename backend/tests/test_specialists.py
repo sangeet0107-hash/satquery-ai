@@ -1,12 +1,9 @@
-import os
-
 import numpy as np
 from PIL import Image
 
 from backend.app.controller import controller as controller_module
 from backend.app.controller.controller import analyze_query
 from backend.app.controller.registry import NoParams, ToolSpec, get_tool
-from backend.app.ingestion.access import RasterAccess
 from backend.app.models.params import ChangeParams, GroundingParams
 from backend.app.models.query import (
     AnalyzeRequest,
@@ -17,34 +14,7 @@ from backend.app.models.query import (
 )
 from backend.app.specialists.change import run_change_detection
 from backend.app.specialists.grounding import run_grounding
-
-
-class FakeAccess(RasterAccess):
-    """In-memory rasters; PNGs are written to a temp directory."""
-
-    def __init__(self, arrays, out_dir, pixel_area=None, scale=(1.0, 1.0)):
-        self.arrays = arrays
-        self.out_dir = str(out_dir)
-        self.pixel_area = pixel_area
-        self.scale = scale
-
-    def resolve(self, image_id):
-        return image_id if image_id in self.arrays else None
-
-    def load_array(self, path, max_side=4096):
-        return self.arrays[path], self.scale
-
-    def load_rgb(self, path, max_side=None):
-        band = np.nan_to_num(self.arrays[path][0])
-        band = np.clip(band, 0, 255).astype("uint8")
-        return Image.fromarray(np.stack([band, band, band], axis=-1))
-
-    def pixel_area_m2(self, path):
-        return self.pixel_area
-
-    def save_png(self, image, filename):
-        image.save(os.path.join(self.out_dir, filename))
-        return filename
+from backend.tests.helpers import FakeAccess
 
 
 def pair(size=200):

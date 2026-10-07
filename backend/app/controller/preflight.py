@@ -71,6 +71,17 @@ def run_preflight(
                     "could not confirm the single-band image is SAR"
                 )
 
+        if (
+            info is not None
+            and info_2 is not None
+            and info.modality in (Modality.OPTICAL, Modality.MULTISPECTRAL)
+            and info_2.modality in (Modality.OPTICAL, Modality.MULTISPECTRAL)
+        ):
+            result.blockers.append(
+                "both uploaded images are optical, but the query needs SAR "
+                "data; upload a SAR image or an optical+SAR pair"
+            )
+
     if pair is not None:
         if pair.pair_type == PairType.UNRELATED:
             result.blockers.append(
