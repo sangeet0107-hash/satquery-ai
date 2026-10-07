@@ -5,7 +5,8 @@ import shutil
 import os
 
 from backend.app.ingestion.raster import inspect_raster, create_preview
-from backend.app.controller.controller import analyze_query
+from backend.app.controller.controller import analyze_query, default_info_loader
+from backend.app.ingestion.info import check_pair
 from backend.app.models.query import AnalyzeRequest, AnalyzeResponse
 
 
@@ -102,3 +103,23 @@ def analyze(request: AnalyzeRequest):
             status_code=500,
             detail=f"Analysis failed: {str(e)}",
         )
+
+
+@app.get("/compatibility")
+def compatibility(image_id: str, image_id_2: str):
+    """Ingestion report for two uploaded images (modality, co-registration, time)."""
+
+    info_1 = default_info_loader(image_id)
+    info_2 = default_info_loader(image_id_2)
+
+    if info_1 is None or info_2 is None:
+        raise HTTPException(
+            status_code=404,
+            detail="One or both images were not found or could not be read",
+        )
+
+    return {
+        "image_1": info_1,
+        "image_2": info_2,
+        "pair": check_pair(info_1, info_2),
+    }
