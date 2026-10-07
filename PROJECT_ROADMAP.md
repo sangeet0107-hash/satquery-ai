@@ -3,6 +3,10 @@
 > **Purpose:** This document is the implementation roadmap for SatQuery AI. It maps the current codebase and Git milestones to the features described in the project proposal, so the team can track what is implemented, what is partially implemented, and what remains.
 >
 > **Source of truth:** SatQueryAI proposal PDF supplied with the project. This roadmap preserves the proposal's major architecture and feature requirements while turning them into implementation tasks.
+>
+> **Last updated:** 2026-10-07, after the SAR specialist merge (`65b830f`).
+>
+> **How to read the checkboxes:** `[x]` means implemented and covered by tests that have been run. An unchecked item with a note in italics is partly done, or written but not yet verified; the note says which.
 
 ---
 
@@ -135,6 +139,9 @@ Main files:
 ```text
 backend/app/main.py
 backend/app/ingestion/raster.py
+backend/app/ingestion/info.py      (modality, dates, pair checks)
+backend/app/ingestion/access.py    (file access used by specialists)
+backend/app/ingestion/store.py     (upload lookup)
 requirements.txt
 ```
 
@@ -150,16 +157,16 @@ Maps to:
 
 ### Remaining ingestion work
 
-- [ ] Detect optical vs multispectral vs SAR.
-- [ ] Detect/record band semantics where metadata allows.
-- [ ] Validate paired-image compatibility.
-- [ ] Check spatial dimensions.
-- [ ] Check CRS compatibility.
-- [ ] Check transform/georeferencing compatibility.
-- [ ] Check co-registration.
-- [ ] Detect temporal metadata.
-- [ ] Support multiple uploaded images cleanly.
-- [ ] Return a stable image identifier.
+- [x] Detect optical vs multispectral vs SAR. *(heuristic: metadata and file-name hints first, then band count; it reports its own confidence and reason)*
+- [ ] Detect/record band semantics where metadata allows. *(not done: bands 1-3 are assumed to be R, G, B, and fusion assumes band 4 is near-infrared)*
+- [x] Validate paired-image compatibility.
+- [x] Check spatial dimensions.
+- [x] Check CRS compatibility.
+- [x] Check transform/georeferencing compatibility. *(pixel size and extent overlap)*
+- [x] Check co-registration. *(from metadata only: same CRS, grid and extent; actual image alignment is not measured)*
+- [x] Detect temporal metadata. *(acquisition tags first, then a date in the file name)*
+- [ ] Support multiple uploaded images cleanly. *(two images work end to end; the UI always sends the first two uploads)*
+- [ ] Return a stable image identifier. *(still the raw filename, so two uploads with the same name overwrite each other)*
 - [ ] Store ingestion metadata in a persistent database later.
 
 ---
@@ -196,13 +203,13 @@ frontend/package.json
 
 - [ ] Replace placeholder raster viewer with real rendered imagery everywhere.
 - [ ] Add real map rendering with Leaflet or Mapbox GL.
-- [ ] Render bounding boxes.
-- [ ] Render masks.
-- [ ] Render change maps.
-- [ ] Render optical-SAR overlays.
+- [ ] Render bounding boxes. *(drawn by the backend into one evidence image shown in the Evidence tab; not interactive and not on the main viewer)*
+- [ ] Render masks. *(drawn by the backend into one evidence image shown in the Evidence tab; not interactive and not on the main viewer)*
+- [ ] Render change maps. *(drawn by the backend into one evidence image shown in the Evidence tab; not interactive and not on the main viewer)*
+- [ ] Render optical-SAR overlays. *(drawn by the backend into one evidence image shown in the Evidence tab; not interactive and not on the main viewer)*
 - [ ] Support selecting multiple datasets.
-- [ ] Add report download.
-- [ ] Add richer evidence panels.
+- [ ] Add report download. *(link added in the Evidence tab; not yet confirmed in a browser)*
+- [ ] Add richer evidence panels. *(basic panel added: overlay image plus a list of evidence items with boxes and scores)*
 - [ ] Add query history / retrieval UI if needed.
 
 ---
@@ -255,8 +262,13 @@ Current classifier uses keyword/rule matching.
 Main file:
 
 ```text
-backend/app/controller/classifier.py
+backend/app/controller/classifier.py   (keyword rules)
+backend/app/controller/router.py       (Router interface; RuleRouter wraps the classifier)
+backend/app/controller/registry.py     (tool registry)
+backend/app/controller/preflight.py    (checks before any tool runs)
 ```
+
+The keyword classifier is kept as `RuleRouter`, the deterministic fallback asked for below. An LLM router can implement the same `Router` interface without changing the controller.
 
 ### Proposal target
 
@@ -264,13 +276,13 @@ The proposal describes an agentic controller where an LLM reads the query plus i
 
 ### Remaining controller work
 
-- [ ] Add ingestion metadata to routing context.
-- [ ] Create formal tool registry.
-- [ ] Define permitted parameters for each specialist.
-- [ ] Preserve structured routing state.
+- [x] Add ingestion metadata to routing context. *(passed to the router and used by the preflight checks; the rule router itself does not use it yet)*
+- [x] Create formal tool registry.
+- [x] Define permitted parameters for each specialist. *(strict Pydantic models; unknown or out-of-range values are rejected)*
+- [ ] Preserve structured routing state. *(each decision is recorded in the trace as task, router and rationale; there is no multi-step state)*
 - [ ] Add LangGraph/LangChain orchestration if justified.
 - [ ] Add multi-tool routing for queries requiring more than one capability.
-- [ ] Add routing tests.
+- [x] Add routing tests.
 - [ ] Backtest routing against labelled queries.
 - [ ] Measure routing accuracy.
 - [ ] Measure false-positive task selection.
@@ -289,14 +301,15 @@ Implemented:
 
 - VQA specialist interface.
 - Uploaded-image resolution.
-- GeoTIFF first-band loading.
+- GeoTIFF loading as an RGB composite of bands 1-3 (single-band rasters as greyscale).
 - Numeric normalization.
 - RGB conversion.
 - BLIP VQA model loading.
 - CPU inference.
 - Answer generation.
 - Execution trace.
-- Placeholder system confidence.
+- Placeholder system confidence (fixed 0.70).
+- Model name and parameters recorded in the execution trace.
 
 Main file:
 
@@ -329,52 +342,60 @@ BLIP is a general-image VQA model, not a satellite-specific model. It establishe
 ---
 
 ## 4.2 Visual Grounding
-**Status: STUB**
+**Status: IMPLEMENTED, MODEL NOT YET RUN**
 
-Current file:
+Everything around the model is tested with a fake detector. The real model has never been executed, so treat this specialist as unverified until one real grounding query has been run.
+
+Current files:
 
 ```text
-backend/app/specialists/grounding.py
+backend/app/specialists/grounding.py   (OWL-ViT wrapper, answer, evidence)
+backend/app/analysis/grounding.py      (target extraction, tiling, box merging)
 ```
 
 Required:
 
-- [ ] Load actual image.
-- [ ] Accept referring expressions such as:
+- [x] Load actual image.
+- [x] Accept referring expressions such as:
       - "Where are the buildings?"
       - "Locate the ships."
       - "Find the road."
-- [ ] Run a grounding/localization model.
-- [ ] Return bounding boxes and/or masks.
-- [ ] Return textual interpretation.
-- [ ] Return model score.
-- [ ] Produce visual overlay.
-- [ ] Persist evidence coordinates.
-- [ ] Display evidence in frontend.
+      *(done: the target object is pulled out of the question by rules)*
+- [ ] Run a grounding/localization model. *(wired to OWL-ViT `google/owlvit-base-patch32` through the transformers zero-shot detection pipeline, on CPU; never executed)*
+- [x] Return bounding boxes and/or masks. *(boxes only)*
+- [x] Return textual interpretation.
+- [x] Return model score. *(raw detector score, uncalibrated)*
+- [x] Produce visual overlay.
+- [x] Persist evidence coordinates. *(stored with each analysis under `uploads/analyses/`)*
+- [ ] Display evidence in frontend. *(Evidence tab added; not yet confirmed in a browser)*
 - [ ] Add evaluation metrics such as IoU where labelled data exists.
 
 ---
 
 ## 4.3 Multitemporal Change Understanding
-**Status: STUB**
+**Status: FUNCTIONAL BASELINE (pixel-level, no learned model)**
 
-Current file:
+It reports where the imagery changed and by how much. It cannot say what kind of change it is, and the answer text says so. Only two images on the same pixel grid are supported.
+
+Current files:
 
 ```text
-backend/app/specialists/change.py
+backend/app/specialists/change.py   (answer, evidence, area)
+backend/app/analysis/change.py      (change vector analysis)
+backend/app/analysis/masks.py       (threshold and mask cleanup, shared with SAR)
 ```
 
 Required:
 
-- [ ] Accept two images.
-- [ ] Validate that both are compatible.
-- [ ] Check spatial alignment / co-registration.
-- [ ] Identify acquisition dates where available.
-- [ ] Compute baseline change representation.
-- [ ] Connect a change-understanding model.
-- [ ] Generate change mask/map.
-- [ ] Explain detected changes in natural language.
-- [ ] Quantify changed area.
+- [x] Accept two images.
+- [x] Validate that both are compatible. *(pairs with different pixel dimensions are refused with an explanation)*
+- [x] Check spatial alignment / co-registration. *(metadata check, plus tolerance for 1 px of misalignment by default, adjustable to 3)*
+- [x] Identify acquisition dates where available.
+- [x] Compute baseline change representation. *(change vector analysis on robustly standardised bands)*
+- [ ] Connect a change-understanding model. *(not done)*
+- [x] Generate change mask/map.
+- [ ] Explain detected changes in natural language. *(partly: location, size and brighter/darker, but not the type of change)*
+- [x] Quantify changed area. *(percentage of the scene, and ground area when georeferenced)*
 - [ ] Report uncertainty interval.
 - [ ] Add temporal change-point detection.
 - [ ] Add rolling z-score anomaly detection.
@@ -388,27 +409,30 @@ Required:
 ---
 
 ## 4.4 Optical-SAR Fusion
-**Status: STUB**
+**Status: FUNCTIONAL BASELINE (classical, no learned model)**
 
-Current file:
+Tested on simulated speckle only. "Water-like" means low backscatter; tarmac, smooth bare ground and radar shadow look the same, and every answer that reports such a surface says so.
+
+Current files:
 
 ```text
-backend/app/specialists/sar.py
+backend/app/specialists/sar.py   (image selection, answer, evidence)
+backend/app/analysis/sar.py      (speckle filter, water-like mask, bright targets, fusion)
 ```
 
 Required:
 
-- [ ] Accept optical image + SAR image.
-- [ ] Validate pair.
-- [ ] Validate co-registration.
-- [ ] Identify modalities.
-- [ ] Normalize optical and SAR inputs appropriately.
-- [ ] Connect a joint optical-SAR model.
-- [ ] Return textual answer.
-- [ ] Return evidence.
-- [ ] Return confidence.
-- [ ] Visualize paired evidence.
-- [ ] Test with Sentinel-1/Sentinel-2 where available.
+- [x] Accept optical image + SAR image. *(in either order; a single SAR image also works)*
+- [x] Validate pair.
+- [x] Validate co-registration. *(metadata check; fusion is skipped with a warning when the grids differ)*
+- [x] Identify modalities.
+- [x] Normalize optical and SAR inputs appropriately. *(SAR: decibel/linear detection and Lee speckle filter; optical: band 4 as near-infrared when present, else mean brightness)*
+- [ ] Connect a joint optical-SAR model. *(not done: fusion is decision-level agreement between a SAR low-backscatter mask and an optical dark-surface mask)*
+- [x] Return textual answer.
+- [x] Return evidence.
+- [x] Return confidence. *(uncalibrated heuristic)*
+- [x] Visualize paired evidence. *(colour-coded overlay: dark in both, SAR only, optical only)*
+- [ ] Test with Sentinel-1/Sentinel-2 where available. *(not done: simulated data only)*
 - [ ] Investigate proposal examples such as EarthMind / Earth-OneVision.
 
 ---
@@ -424,6 +448,8 @@ backend/app/specialists/unknown.py
 
 Keep this.
 
+For recognised tasks, the preflight checks now explain what is missing (for example, a second image for change detection) before any tool runs.
+
 Required improvements:
 
 - [ ] Explain what information/task is missing.
@@ -434,7 +460,7 @@ Required improvements:
 
 # 5. Evidence-Grounded Output Layer
 
-**Status: PARTIAL**
+**Status: IMPLEMENTED IN THE BACKEND (frontend display not yet confirmed)**
 
 The proposal requires answers that are not only free text, but are accompanied by evidence such as visual highlights, bounding boxes, or masks.
 
@@ -464,18 +490,20 @@ Required output structure should eventually resemble:
 }
 ```
 
+The implemented schema is flatter than the sketch above: `evidence` is a list of items, each with `kind` (`bbox` or `mask`), `label`, `bbox` as `[x_min, y_min, x_max, y_max]`, `mask_ref` and `score`. The response also carries `overlay` (the rendered evidence image) and `analysis_id`.
+
 Tasks:
 
-- [ ] Extend Pydantic response models.
-- [ ] Define evidence schema.
-- [ ] Support bounding boxes.
-- [ ] Support masks.
-- [ ] Support highlighted regions.
-- [ ] Support change maps.
-- [ ] Add geospatial coordinates when possible.
-- [ ] Render evidence in React.
-- [ ] Preserve source-image coordinate system.
-- [ ] Make evidence downloadable.
+- [x] Extend Pydantic response models.
+- [x] Define evidence schema.
+- [x] Support bounding boxes.
+- [x] Support masks.
+- [x] Support highlighted regions. *(as tinted masks in the overlay image)*
+- [x] Support change maps. *(change mask saved as a PNG)*
+- [ ] Add geospatial coordinates when possible. *(not done: evidence is in pixel coordinates only)*
+- [ ] Render evidence in React. *(Evidence tab shows the backend-rendered overlay and the item list; not yet confirmed in a browser)*
+- [x] Preserve source-image coordinate system. *(boxes are mapped back to source pixels when the analysis ran at reduced resolution)*
+- [ ] Make evidence downloadable. *(mask and overlay PNGs are served by `/preview/{filename}` and the overlay is embedded in the report; there is no download button)*
 
 ---
 
@@ -484,6 +512,8 @@ Tasks:
 **Status: PARTIAL / PLACEHOLDER**
 
 The current VQA confidence is a temporary system value and should NOT be presented as calibrated model probability.
+
+The same now applies to every specialist. All four return a confidence, and none is calibrated: VQA is a fixed 0.70, grounding is the mean raw detector score, and change and SAR use contrast-based heuristics. The execution trace and the report label them as uncalibrated.
 
 Proposal requirements:
 
@@ -514,7 +544,7 @@ Tasks:
 
 # 7. Quantitative Remote-Sensing Analysis
 
-**Status: NOT IMPLEMENTED**
+**Status: PARTIAL (area measurement only)**
 
 The proposal calls for quantitative techniques beyond simple text answers.
 
@@ -544,9 +574,9 @@ Purpose:
 
 ### Area/change measurements
 
-- [ ] Calculate changed area.
-- [ ] Convert pixel counts to physical area using georeferencing.
-- [ ] Report percentage increase/decrease.
+- [x] Calculate changed area.
+- [x] Convert pixel counts to physical area using georeferencing.
+- [ ] Report percentage increase/decrease. *(the share of the scene that changed is reported; increase or decrease of a specific land cover is not)*
 - [ ] Attach uncertainty interval.
 
 ---
@@ -726,11 +756,11 @@ Tasks:
 
 - [ ] Band extraction.
 - [ ] Multiband visualization.
-- [ ] CRS handling.
+- [ ] CRS handling. *(the CRS is read and compared; nothing is reprojected)*
 - [ ] Pixel-to-coordinate conversion.
-- [ ] Co-registration checks.
+- [x] Co-registration checks. *(from metadata)*
 - [ ] Raster alignment.
-- [ ] Resampling.
+- [ ] Resampling. *(only downsampling of large rasters before analysis)*
 - [ ] Spatial footprint calculation.
 - [ ] Evidence coordinate conversion.
 - [ ] Optional QGIS-compatible overlay export.
@@ -772,7 +802,7 @@ Tasks:
 
 # 14. Downloadable Report
 
-**Status: NOT IMPLEMENTED**
+**Status: IMPLEMENTED AS HTML (PDF not done)**
 
 Proposal requires a downloadable report containing:
 
@@ -786,19 +816,19 @@ Proposal requires a downloadable report containing:
 
 Tasks:
 
-- [ ] Define report schema.
-- [ ] Generate PDF.
-- [ ] Include source metadata.
-- [ ] Include query.
-- [ ] Include answer.
-- [ ] Include evidence image(s).
-- [ ] Include confidence.
+- [x] Define report schema. *(`AnalysisRecord`: id, time, image names and the full response)*
+- [ ] Generate PDF. *(not done: the report is one self-contained HTML file, which prints to PDF from a browser)*
+- [ ] Include source metadata. *(image names only)*
+- [x] Include query.
+- [x] Include answer.
+- [x] Include evidence image(s).
+- [x] Include confidence. *(labelled as uncalibrated)*
 - [ ] Include uncertainty.
-- [ ] Include execution trace.
-- [ ] Include model/tool names.
-- [ ] Include parameters.
-- [ ] Add download endpoint.
-- [ ] Add frontend download button.
+- [x] Include execution trace.
+- [x] Include model/tool names.
+- [x] Include parameters.
+- [x] Add download endpoint. *(`GET /report/{analysis_id}`)*
+- [ ] Add frontend download button. *(link added in the Evidence tab; not yet confirmed in a browser)*
 
 ---
 
@@ -927,6 +957,8 @@ Required minimum CI:
 - [ ] Build frontend.
 - [ ] Run frontend lint/test if configured.
 
+The tests below already exist and can be run by CI as they are; there is no workflow file yet.
+
 Recommended test groups:
 
 ```text
@@ -939,6 +971,27 @@ tests/
 ├── test_grounding.py
 └── test_sar.py
 ```
+
+Actual layout as of 2026-10-07:
+
+```text
+backend/tests/
+├── test_ingestion.py           (real GeoTIFF reads)
+├── test_ingestion_info.py      (modality, dates, pair checks)
+├── test_classifier.py
+├── test_controller.py
+├── test_preflight_registry.py
+├── test_api.py                 (upload → analyze → report)
+├── test_change_analysis.py
+├── test_grounding_analysis.py
+├── test_overlay_report.py
+├── test_specialists.py         (change and grounding, in-memory)
+├── test_sar_analysis.py
+├── test_sar_specialist.py
+└── helpers.py
+```
+
+There is no VQA test: it would need the BLIP model.
 
 ---
 
@@ -972,12 +1025,12 @@ Already:
 Tasks:
 
 - [ ] File-size limits.
-- [ ] Raster dimension limits.
+- [ ] Raster dimension limits. *(large rasters are analysed at reduced resolution, but uploads are not rejected by size)*
 - [ ] Safe upload naming.
-- [ ] Avoid arbitrary filesystem paths.
-- [ ] Validate all model parameters.
-- [ ] Restrict tool parameters.
-- [ ] Prevent unsupported tool execution.
+- [x] Avoid arbitrary filesystem paths. *(upload names are reduced to their base name; report ids must match a fixed pattern)*
+- [x] Validate all model parameters.
+- [x] Restrict tool parameters.
+- [x] Prevent unsupported tool execution. *(tools run only through the registry)*
 - [ ] Error handling around malformed rasters.
 - [ ] Model timeout handling.
 - [ ] Memory/resource protection.
@@ -989,22 +1042,22 @@ Tasks:
 
 ## Unit tests
 
-- [ ] Raster metadata extraction.
-- [ ] Preview creation.
+- [x] Raster metadata extraction.
+- [x] Preview creation.
 - [ ] Invalid file rejection.
-- [ ] Query classifier.
+- [x] Query classifier.
 - [ ] Image resolution.
-- [ ] VQA preprocessing.
+- [x] VQA preprocessing. *(the shared raster-to-RGB loader)*
 - [ ] Evidence schema validation.
 
 ## Integration tests
 
-- [ ] Upload → inspect.
+- [x] Upload → inspect.
 - [ ] Upload → preview.
 - [ ] Upload → analyze → VQA.
-- [ ] Two uploads → change.
-- [ ] Optical + SAR → fusion.
-- [ ] Grounding → overlay.
+- [x] Two uploads → change.
+- [ ] Optical + SAR → fusion. *(a single SAR upload → water mapping is covered through the API; the paired case is tested with in-memory rasters only)*
+- [ ] Grounding → overlay. *(in-memory rasters and a fake detector only)*
 
 ## Model evaluation
 
@@ -1050,7 +1103,7 @@ Measure:
 
 - [ ] Better image registry.
 - [ ] Real multi-image upload.
-- [ ] Ingestion modality detection.
+- [x] Ingestion modality detection.
 - [ ] VQA evaluation set.
 - [ ] VQA evidence support.
 
@@ -1060,19 +1113,19 @@ Measure:
 
 ### Grounding
 
-- [ ] Actual grounding model.
-- [ ] Bounding boxes.
-- [ ] Overlay rendering.
-- [ ] Grounding API result schema.
+- [ ] Actual grounding model. *(OWL-ViT wired in; never executed)*
+- [x] Bounding boxes.
+- [x] Overlay rendering.
+- [x] Grounding API result schema.
 
 ### Change
 
-- [ ] Two-image ingestion.
-- [ ] Co-registration validation.
-- [ ] Change model/baseline.
-- [ ] Change mask.
-- [ ] Change explanation.
-- [ ] Area calculation.
+- [x] Two-image ingestion.
+- [x] Co-registration validation.
+- [x] Change model/baseline. *(baseline)*
+- [x] Change mask.
+- [ ] Change explanation. *(location, size and direction only)*
+- [x] Area calculation.
 
 ---
 
@@ -1080,17 +1133,17 @@ Measure:
 
 ### Optical-SAR
 
-- [ ] Pair validation.
-- [ ] Optical preprocessing.
-- [ ] SAR preprocessing.
-- [ ] Fusion model/baseline.
-- [ ] Evidence output.
+- [x] Pair validation.
+- [x] Optical preprocessing. *(minimal: near-infrared band or mean brightness)*
+- [x] SAR preprocessing.
+- [x] Fusion model/baseline. *(baseline)*
+- [x] Evidence output.
 
 ### Evidence
 
-- [ ] Unified evidence schema.
-- [ ] Frontend overlays.
-- [ ] Coordinates.
+- [x] Unified evidence schema.
+- [ ] Frontend overlays. *(backend-rendered image in the Evidence tab; not yet confirmed in a browser)*
+- [x] Coordinates. *(pixel coordinates)*
 
 ### Confidence
 
@@ -1103,11 +1156,11 @@ Measure:
 
 ## Week 4 — Integration + Evaluation + Demo
 
-- [ ] Controller/tool registry.
+- [x] Controller/tool registry.
 - [ ] Optional LangGraph integration.
 - [ ] Retrieval/FAISS prototype.
-- [ ] Report generation.
-- [ ] Test suite.
+- [x] Report generation. *(HTML)*
+- [x] Test suite.
 - [ ] GitHub Actions.
 - [ ] MLflow tracking.
 - [ ] Docker Compose if time permits.
@@ -1130,21 +1183,21 @@ Measure:
 - [x] Natural-language query
 - [x] Routing
 - [x] Real VQA
-- [ ] Grounding
-- [ ] Change understanding
-- [ ] Optical-SAR pair analysis
-- [ ] Evidence overlays
-- [ ] Confidence
+- [ ] Grounding *(implemented; model not yet run)*
+- [x] Change understanding *(pixel-level baseline)*
+- [x] Optical-SAR pair analysis *(classical baseline)*
+- [x] Evidence overlays
+- [ ] Confidence *(returned everywhere, but uncalibrated)*
 - [x] Execution trace
-- [ ] Multiple image support
+- [ ] Multiple image support *(two images work; no stable ids)*
 
 ## P1 — Strongly recommended
 
 - [ ] LLM/agentic controller
-- [ ] Formal tool registry
-- [ ] Downloadable report
+- [x] Formal tool registry
+- [x] Downloadable report *(HTML)*
 - [ ] Real map viewer
-- [ ] Co-registration checks
+- [x] Co-registration checks *(from metadata)*
 - [ ] Calibrated confidence
 - [ ] Basic evaluation benchmark
 - [ ] GitHub Actions
@@ -1179,48 +1232,92 @@ Measure:
 backend/app/main.py
     API endpoints
     CORS
-    upload
-    preview
-    analyze
+    upload              POST /inspect-raster
+    preview             GET  /preview/{filename}   (also serves evidence images)
+    analyze             POST /analyze
+    pair report         GET  /compatibility
+    report download     GET  /report/{analysis_id}
 
 backend/app/ingestion/raster.py
-    GeoTIFF inspection
-    metadata
-    preview
+    GeoTIFF inspection, metadata, preview
+    raster → RGB image, raster → array, pixel ground area
+
+backend/app/ingestion/info.py
+    modality detection, acquisition date, pair compatibility
+
+backend/app/ingestion/access.py
+    file access used by specialists (replaced by a fake in tests)
+
+backend/app/ingestion/store.py
+    upload lookup
 
 backend/app/controller/classifier.py
-    query classification
+    keyword query classification
+
+backend/app/controller/router.py
+    Router interface; RuleRouter wraps the classifier
+
+backend/app/controller/registry.py
+    tool registry: one ToolSpec per task
+
+backend/app/controller/preflight.py
+    blocks or warns when the imagery cannot support the task
 
 backend/app/controller/controller.py
-    routing
-    specialist invocation
+    ingestion → routing → preflight → specialist → response
     execution trace
 
 backend/app/models/query.py
-    Pydantic request/response schemas
+    Pydantic request/response schemas, Evidence, SpecialistResult
+
+backend/app/models/params.py
+    permitted parameters for each tool
+
+backend/app/analysis/change.py
+    change vector analysis
+
+backend/app/analysis/grounding.py
+    target extraction from the question, tiling, box merging
+
+backend/app/analysis/sar.py
+    speckle filter, water-like mask, bright targets, optical-SAR fusion
+
+backend/app/analysis/masks.py
+    threshold and mask cleanup shared by change and SAR
+
+backend/app/analysis/overlay.py
+    draws masks and boxes on an image
 
 backend/app/specialists/vqa.py
     BLIP VQA
-    GeoTIFF → RGB preprocessing
 
 backend/app/specialists/grounding.py
-    grounding placeholder
+    OWL-ViT grounding (model not yet run)
 
 backend/app/specialists/change.py
-    change placeholder
+    bi-temporal change detection
 
 backend/app/specialists/sar.py
-    optical-SAR placeholder
+    SAR analysis and optical-SAR fusion
 
 backend/app/specialists/unknown.py
     unsupported-query fallback
+
+backend/app/reporting/store.py
+    saves each analysis
+
+backend/app/reporting/report.py
+    builds the HTML report
+
+backend/tests/
+    see §18 for the list
 
 frontend/src/App.jsx
     main application UI
     upload
     query
     analysis
-    evidence
+    evidence (overlay image, evidence list, report link)
     trace
 
 frontend/src/App.css
@@ -1243,17 +1340,32 @@ Every completed milestone should update this section.
 | Frontend milestone | Mission-control UI | COMPLETE | React interface |
 | Integration milestone | `/analyze` integration | COMPLETE | Frontend ↔ backend |
 | Routing milestone | Rule-based controller | COMPLETE | SAR → CHANGE → GROUNDING → VQA |
-| VQA milestone | BLIP VQA | COMPLETE | CPU inference |
-| Next | Grounding | TODO | Real localization model |
-| Next | Change | TODO | Bi-temporal analysis |
-| Next | Optical-SAR | TODO | Paired sensor analysis |
-| Next | Evidence | TODO | Boxes/masks/overlays |
+| `53ca5a7` | BLIP VQA | COMPLETE | CPU inference |
+| `93a891c` (PR #2) | Dependency fixes, shared RGB loader, evidence fields, first tests | COMPLETE | VQA now sees the RGB composite |
+| `f9a0b9f` (PR #3) | Ingestion checks, tool registry, router interface, preflight | COMPLETE | Classifier kept as the fallback router |
+| `39f4935` (PR #4) | Change detection | COMPLETE AS BASELINE | Pixel-level; no learned model |
+| `39f4935` (PR #4) | Grounding | UNVERIFIED | OWL-ViT wired in but never executed |
+| `39f4935` (PR #4) | Evidence overlays | COMPLETE IN BACKEND | Frontend display not yet confirmed |
+| `39f4935` (PR #4) | Reports | COMPLETE AS HTML | No PDF |
+| `ac71756` (PR #5) | Optical-SAR | COMPLETE AS BASELINE | Classical; simulated data only |
 | Next | Confidence | TODO | Calibration |
-| Next | Reports | TODO | Downloadable report |
 | Next | Evaluation | TODO | Held-out benchmark |
 | Next | Advanced | TODO | Retrieval/dynamics/etc. |
 
 > Replace/add the actual Git commit SHA beside each row whenever a milestone is committed. Do not invent SHAs in this document.
+
+### What was actually tested (2026-10-07)
+
+- `pytest backend/tests` was run on a team Windows machine after PR #5 was merged and reported no failures. This includes the tests that read real GeoTIFFs and call the API.
+- Change detection was also tried on a structured photo with planted changes, a brightness shift, noise and a 1 px misalignment, and found exactly the planted regions.
+- SAR analysis has only been run on simulated speckle (1 and 4 looks).
+
+Not yet exercised:
+
+- The OWL-ViT grounding model has never been executed.
+- Nothing has been run on real satellite or SAR imagery.
+- The Evidence tab and report link have not been confirmed in a browser.
+- BLIP VQA has no automated test.
 
 ---
 
@@ -1351,6 +1463,8 @@ Domain adaptation
     ↓
 Deployment infrastructure
 ```
+
+**Position as of 2026-10-07:** everything down to Evidence has a working path, with Grounding still to be run once against the real model. Reporting was done early, as HTML. The next steps in this order are Confidence and Evaluation.
 
 A simple, working, evaluated system is more useful than many unfinished integrations.
 
