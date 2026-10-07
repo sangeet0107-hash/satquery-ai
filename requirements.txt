@@ -4,3 +4,7 @@ rasterio
 numpy
 pillow
 python-multipart
+torch
+transformers
+pytest
+httpx
