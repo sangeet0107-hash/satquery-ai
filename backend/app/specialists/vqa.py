@@ -1,29 +1,11 @@
-import os
-
-from backend.app.ingestion.raster import load_rgb_image
+from backend.app.ingestion.store import resolve_upload_path
 from backend.app.models.query import ExecutionStep
 
 
-UPLOAD_DIR = "uploads"
 MODEL_NAME = "Salesforce/blip-vqa-base"
 
 _processor = None
 _model = None
-
-
-def _resolve_image_path(image_id: str | None) -> str | None:
-    """Resolve the uploaded image filename to a file in uploads/."""
-
-    if not image_id:
-        return None
-
-    filename = os.path.basename(image_id)
-    image_path = os.path.join(UPLOAD_DIR, filename)
-
-    if os.path.exists(image_path):
-        return image_path
-
-    return None
 
 
 def _load_model():
@@ -52,6 +34,7 @@ def _load_model():
 def run_vqa(
     query: str,
     image_id: str | None = None,
+    max_new_tokens: int = 30,
 ) -> tuple[str, float, list[ExecutionStep]]:
 
     trace = [
@@ -61,7 +44,7 @@ def run_vqa(
         )
     ]
 
-    image_path = _resolve_image_path(image_id)
+    image_path = resolve_upload_path(image_id)
 
     if image_path is None:
         trace.append(
@@ -86,6 +69,8 @@ def run_vqa(
     )
 
     try:
+        from backend.app.ingestion.raster import load_rgb_image
+
         image = load_rgb_image(image_path)
 
         trace.append(
@@ -120,7 +105,7 @@ def run_vqa(
                 step="VQA model execution",
                 status="running",
                 tool=MODEL_NAME,
-                params={"max_new_tokens": 30, "device": "cpu"},
+                params={"max_new_tokens": max_new_tokens, "device": "cpu"},
             )
         )
 
@@ -129,7 +114,7 @@ def run_vqa(
         with torch.no_grad():
             output = model.generate(
                 **inputs,
-                max_new_tokens=30,
+                max_new_tokens=max_new_tokens,
             )
 
         answer = processor.decode(
@@ -144,7 +129,7 @@ def run_vqa(
             step="VQA model execution",
             status="complete",
             tool=MODEL_NAME,
-            params={"max_new_tokens": 30, "device": "cpu"},
+            params={"max_new_tokens": max_new_tokens, "device": "cpu"},
         )
 
         trace.append(
