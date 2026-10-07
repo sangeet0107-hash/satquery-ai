@@ -84,6 +84,17 @@ def run_preflight(
                     "change detection needs two images from the same "
                     "sensor type, but this is an optical+SAR pair"
                 )
+            if (
+                info is not None
+                and info_2 is not None
+                and (info.width, info.height) != (info_2.width, info_2.height)
+            ):
+                result.blockers.append(
+                    "the two images have different pixel dimensions "
+                    f"({info.width}x{info.height} vs "
+                    f"{info_2.width}x{info_2.height}); change detection "
+                    "currently needs both on the same grid"
+                )
             if pair.bitemporal is False:
                 result.warnings.append(
                     "both images have the same acquisition date"

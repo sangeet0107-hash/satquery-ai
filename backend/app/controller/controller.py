@@ -9,6 +9,7 @@ from backend.app.models.query import (
     AnalyzeResponse,
     ExecutionStep,
     TaskType,
+    as_specialist_result,
 )
 
 InfoLoader = Callable[[str | None], RasterInfo | None]
@@ -143,11 +144,13 @@ def analyze_query(
             execution_trace=trace,
         )
 
-    answer, confidence, specialist_trace = tool.runner(
-        request.query,
-        request.image_id,
-        request.image_id_2,
-        params,
+    result = as_specialist_result(
+        tool.runner(
+            request.query,
+            request.image_id,
+            request.image_id_2,
+            params,
+        )
     )
 
     trace.append(
@@ -158,12 +161,14 @@ def analyze_query(
         )
     )
 
-    trace.extend(specialist_trace)
+    trace.extend(result.trace)
 
     return AnalyzeResponse(
         query=request.query,
         task=task,
-        answer=answer,
-        confidence=confidence,
+        answer=result.answer,
+        confidence=result.confidence,
         execution_trace=trace,
+        evidence=result.evidence,
+        overlay=result.overlay,
     )

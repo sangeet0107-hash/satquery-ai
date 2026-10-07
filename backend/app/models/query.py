@@ -63,3 +63,33 @@ class AnalyzeResponse(BaseModel):
     confidence: float
     execution_trace: list[ExecutionStep]
     evidence: list[Evidence] = Field(default_factory=list)
+    overlay: str | None = Field(
+        default=None,
+        description="Filename of the rendered evidence image "
+        "(served by GET /preview/{filename}).",
+    )
+    analysis_id: str | None = Field(
+        default=None,
+        description="Identifier for GET /report/{analysis_id}.",
+    )
+
+
+class SpecialistResult(BaseModel):
+    """What a specialist tool hands back to the controller."""
+
+    answer: str
+    confidence: float
+    trace: list[ExecutionStep] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
+    overlay: str | None = None
+
+
+def as_specialist_result(value) -> SpecialistResult:
+    """Accept the older (answer, confidence, trace) tuple form as well."""
+
+    if isinstance(value, SpecialistResult):
+        return value
+
+    answer, confidence, trace = value
+
+    return SpecialistResult(answer=answer, confidence=confidence, trace=trace)

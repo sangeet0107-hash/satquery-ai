@@ -3,11 +3,13 @@ import os
 import numpy as np
 import rasterio
 from PIL import Image
+from rasterio.enums import Resampling
 
 from backend.app.ingestion.info import (
     Bounds,
     RasterInfo,
     detect_modality,
+    geographic_pixel_area_m2,
     parse_acquisition_date,
 )
 
@@ -86,6 +88,72 @@ def inspect_raster(file_path: str):
     }
 
 
+def _decimated_shape(dataset, max_side: int | None) -> tuple[int, int] | None:
+    """(height, width) to read at so the longest side is <= max_side."""
+
+    longest = max(dataset.width, dataset.height)
+
+    if not max_side or longest <= max_side:
+        return None
+
+    ratio = max_side / longest
+
+    return (
+        max(1, round(dataset.height * ratio)),
+        max(1, round(dataset.width * ratio)),
+    )
+
+
+def load_array(
+    file_path: str,
+    max_side: int | None = 4096,
+) -> tuple[np.ndarray, tuple[float, float]]:
+    """
+    Read all bands as float32 shaped (bands, height, width); nodata -> NaN.
+
+    Very large rasters are read at reduced resolution. The second return
+    value is (scale_x, scale_y): multiply array pixel coordinates by it to
+    get source-image pixel coordinates.
+    """
+
+    with rasterio.open(file_path) as dataset:
+        shape = _decimated_shape(dataset, max_side)
+
+        if shape is None:
+            data = dataset.read(masked=True)
+            scale = (1.0, 1.0)
+        else:
+            data = dataset.read(
+                out_shape=(dataset.count, shape[0], shape[1]),
+                resampling=Resampling.average,
+                masked=True,
+            )
+            scale = (dataset.width / shape[1], dataset.height / shape[0])
+
+    return data.astype("float32").filled(np.nan), scale
+
+
+def pixel_area_m2(file_path: str) -> float | None:
+    """Ground area of one pixel in square metres; None if not georeferenced."""
+
+    with rasterio.open(file_path) as dataset:
+        if dataset.crs is None:
+            return None
+
+        res_x, res_y = abs(dataset.res[0]), abs(dataset.res[1])
+
+        if dataset.crs.is_geographic:
+            latitude = (dataset.bounds.top + dataset.bounds.bottom) / 2
+            return geographic_pixel_area_m2(res_x, res_y, latitude)
+
+        try:
+            factor = float(dataset.crs.linear_units_factor[1])
+        except Exception:
+            factor = 1.0
+
+        return res_x * res_y * factor * factor
+
+
 def _stretch_to_uint8(band: np.ndarray) -> np.ndarray:
     """Percentile (2-98) contrast stretch of one band to uint8."""
 
@@ -106,7 +174,7 @@ def _stretch_to_uint8(band: np.ndarray) -> np.ndarray:
     return (scaled * 255).astype("uint8")
 
 
-def load_rgb_image(file_path: str) -> Image.Image:
+def load_rgb_image(file_path: str, max_side: int | None = None) -> Image.Image:
     """
     Load a GeoTIFF as an 8-bit RGB PIL image.
 
@@ -114,20 +182,30 @@ def load_rgb_image(file_path: str) -> Image.Image:
     rasters (for example SAR backscatter) are shown as greyscale.
     This is the single place where rasters become model/preview
     input, so previews and specialist models always see the same image.
+
+    max_side reads a reduced-resolution copy (longest side <= max_side),
+    which keeps overlays of very large scenes cheap.
     """
 
     with rasterio.open(file_path) as dataset:
-        if dataset.count >= 3:
-            data = dataset.read([1, 2, 3])
-            array = np.stack(
-                [_stretch_to_uint8(band) for band in data],
-                axis=-1,
-            )
-        else:
-            band = _stretch_to_uint8(dataset.read(1))
-            array = np.stack([band, band, band], axis=-1)
+        indexes = [1, 2, 3] if dataset.count >= 3 else [1]
+        shape = _decimated_shape(dataset, max_side)
 
-    return Image.fromarray(array, mode="RGB")
+        if shape is None:
+            data = dataset.read(indexes)
+        else:
+            data = dataset.read(
+                indexes,
+                out_shape=(len(indexes), shape[0], shape[1]),
+                resampling=Resampling.average,
+            )
+
+    bands = [_stretch_to_uint8(band) for band in data]
+
+    if len(bands) == 1:
+        bands = bands * 3
+
+    return Image.fromarray(np.stack(bands, axis=-1))
 
 
 def create_preview(file_path: str, output_path: str):

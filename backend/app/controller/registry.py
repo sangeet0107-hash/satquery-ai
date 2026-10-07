@@ -11,9 +11,14 @@ controller itself does not change.
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from backend.app.models.query import ExecutionStep, TaskType
+from backend.app.models.params import (
+    ChangeParams,
+    GroundingParams,
+    NoParams,
+    ToolParams,
+    VQAParams,
+)
+from backend.app.models.query import SpecialistResult, TaskType
 from backend.app.specialists.change import run_change_detection
 from backend.app.specialists.grounding import run_grounding
 from backend.app.specialists.sar import run_sar
@@ -21,24 +26,22 @@ from backend.app.specialists.unknown import run_unknown
 from backend.app.specialists.vqa import run_vqa
 
 
-class ToolParams(BaseModel):
-    """Base for tool parameters. Unknown parameters are rejected."""
+# runner(query, image_id, image_id_2, params) -> SpecialistResult
+# (the older (answer, confidence, trace) tuple is still accepted).
+Runner = Callable[[str, str | None, str | None, Any], Any]
 
-    model_config = ConfigDict(extra="forbid")
-
-
-class NoParams(ToolParams):
-    pass
-
-
-class VQAParams(ToolParams):
-    max_new_tokens: int = Field(default=30, ge=1, le=100)
-
-
-ToolResult = tuple[str, float, list[ExecutionStep]]
-
-# runner(query, image_id, image_id_2, params) -> (answer, confidence, trace)
-Runner = Callable[[str, str | None, str | None, Any], ToolResult]
+__all__ = [
+    "ChangeParams",
+    "GroundingParams",
+    "NoParams",
+    "SpecialistResult",
+    "ToolParams",
+    "ToolSpec",
+    "VQAParams",
+    "get_tool",
+    "list_tools",
+    "register_tool",
+]
 
 
 @dataclass(frozen=True)
@@ -88,11 +91,11 @@ register_tool(
 
 register_tool(
     ToolSpec(
-        name="grounding",
+        name="owlvit-grounding",
         task=TaskType.GROUNDING,
-        description="Region-level object localisation (boxes/masks).",
-        params_model=NoParams,
-        runner=lambda q, a, b, p: run_grounding(query=q, image_id=a),
+        description="Open-vocabulary object localisation (bounding boxes).",
+        params_model=GroundingParams,
+        runner=lambda q, a, b, p: run_grounding(query=q, image_id=a, params=p),
     )
 )
 
@@ -100,10 +103,10 @@ register_tool(
     ToolSpec(
         name="change-detection",
         task=TaskType.CHANGE,
-        description="Bi-temporal change understanding.",
-        params_model=NoParams,
+        description="Bi-temporal pixel-level change detection (mask + regions).",
+        params_model=ChangeParams,
         runner=lambda q, a, b, p: run_change_detection(
-            query=q, image_id=a, image_id_2=b
+            query=q, image_id=a, image_id_2=b, params=p
         ),
     )
 )
