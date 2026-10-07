@@ -41,6 +41,7 @@ GROUNDING_KEYWORDS = [
 
 CHANGE_KEYWORDS = [
     "change",
+    "changes",
     "changed",
     "difference",
     "differences",

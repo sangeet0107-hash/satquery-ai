@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import "./App.css";
 
+const API_BASE = "http://127.0.0.1:8000";
+
 const suggestions = [
   "What objects are visible in this image?",
   "Identify the major built-up areas.",
@@ -695,25 +697,38 @@ function App() {
                 </>
               )}
 
-                {activeTab === "evidence" && (
-                  <div className="empty-result">
-                    <div className="state-icon">
-                      ⌖
+                {activeTab === "evidence" &&
+                  (analysisResult?.overlay ||
+                  analysisResult?.evidence?.length ? (
+                    <EvidencePanel analysisResult={analysisResult} />
+                  ) : (
+                    <div className="empty-result">
+                      <div className="state-icon">
+                        ⌖
+                      </div>
+
+                      <h3>
+                        No evidence generated
+                      </h3>
+
+                      <p>
+                        {analysisResult
+                          ? "This analysis did not produce boxes or masks."
+                          : "Visual highlights, bounding boxes and masks will appear here after an analysis is completed."}
+                      </p>
+
+                      {analysisResult?.analysis_id && (
+                        <a
+                          className="evidence-report-link"
+                          href={`${API_BASE}/report/${analysisResult.analysis_id}`}
+                        >
+                          DOWNLOAD REPORT
+                        </a>
+                      )}
+
+                      <TracePreview />
                     </div>
-
-                    <h3>
-                      No evidence generated
-                    </h3>
-
-                    <p>
-                      Visual highlights, bounding boxes
-                      and masks will appear here after an
-                      analysis is completed.
-                    </p>
-
-                    <TracePreview />
-                  </div>
-                )}
+                  ))}
 
                 {activeTab === "trace" && (
                   <div className="trace">
@@ -727,7 +742,13 @@ function App() {
                             item.status === "stub"
                               ? "Specialist execution is currently using a placeholder."
                               : item.status === "warning"
-                              ? "The controller could not confidently route this request."
+                              ? "Completed with a warning; see the step text."
+                              : item.status === "blocked"
+                              ? "The request was stopped before any model ran."
+                              : item.status === "failed"
+                              ? "This step failed."
+                              : item.tool
+                              ? `Completed by ${item.tool}.`
                               : "Step completed successfully."
                           }
                           status={item.status}
@@ -1028,6 +1049,10 @@ function TraceStep({
       ? "WARNING"
       : normalizedStatus === "running"
       ? "RUNNING"
+      : normalizedStatus === "blocked"
+      ? "BLOCKED"
+      : normalizedStatus === "failed"
+      ? "FAILED"
       : "WAITING";
 
   return (
@@ -1044,6 +1069,65 @@ function TraceStep({
       <span className="trace-waiting">
         {statusLabel}
       </span>
+    </div>
+  );
+}
+
+function EvidencePanel({ analysisResult }) {
+  const evidence = analysisResult?.evidence || [];
+
+  return (
+    <div className="evidence-panel">
+      {analysisResult?.overlay && (
+        <img
+          className="evidence-image"
+          src={`${API_BASE}/preview/${encodeURIComponent(
+            analysisResult.overlay
+          )}`}
+          alt="Evidence overlay"
+        />
+      )}
+
+      {evidence.length > 0 && (
+        <div className="evidence-list">
+          {evidence.map((item, index) => (
+            <div
+              className="evidence-item"
+              key={`${item.kind}-${index}`}
+            >
+              <span className="evidence-number">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+
+              <span className="evidence-label">
+                {item.label || item.kind}
+
+                {item.bbox && (
+                  <small>
+                    x {Math.round(item.bbox[0])}–{Math.round(item.bbox[2])}, y{" "}
+                    {Math.round(item.bbox[1])}–{Math.round(item.bbox[3])} px
+                  </small>
+                )}
+              </span>
+
+              <span className="evidence-score">
+                {item.score != null
+                  ? `${Math.round(item.score * 100)}%`
+                  : item.kind.toUpperCase()}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {analysisResult?.analysis_id && (
+        <a
+          className="evidence-report-link"
+          href={`${API_BASE}/report/${analysisResult.analysis_id}`}
+        >
+          DOWNLOAD REPORT
+        </a>
+      )}
     </div>
   );
 }

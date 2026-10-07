@@ -147,3 +147,13 @@ def test_controller_routes_valid_change_request_to_specialist():
     steps = [s.step for s in response.execution_trace]
     assert any("BITEMPORAL" in s for s in steps)
     assert any("Change detection specialist" in s for s in steps)
+
+
+def test_change_on_images_with_different_dimensions_is_blocked():
+    a = make_info(when=date(2023, 1, 1))
+    b = make_info(when=date(2024, 1, 1)).model_copy(update={"width": 50})
+
+    result = run_preflight(TaskType.CHANGE, "a", "b", a, b, check_pair(a, b))
+
+    assert not result.ok
+    assert any("different pixel dimensions" in blocker for blocker in result.blockers)

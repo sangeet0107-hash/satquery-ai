@@ -6,6 +6,7 @@ Nothing in this module imports rasterio, so it is cheap to import and easy
 to unit-test. raster.py is responsible for filling a RasterInfo from a file.
 """
 
+import math
 import re
 from datetime import date
 from enum import Enum
@@ -164,6 +165,30 @@ def parse_acquisition_date(
                 return parsed, f"tag:{key} (file time, weak)"
 
     return None, None
+
+
+# --------------------------------------------------------------------------
+# Ground area
+# --------------------------------------------------------------------------
+
+_METRES_PER_DEGREE = 111_320.0
+
+
+def geographic_pixel_area_m2(
+    res_x_deg: float,
+    res_y_deg: float,
+    latitude_deg: float,
+) -> float:
+    """
+    Approximate ground area of a pixel given in degrees. A degree of
+    longitude shrinks with the cosine of latitude; good to about 1% away
+    from the poles, which is enough for reporting changed area.
+    """
+
+    metres_y = res_y_deg * _METRES_PER_DEGREE
+    metres_x = res_x_deg * _METRES_PER_DEGREE * math.cos(math.radians(latitude_deg))
+
+    return abs(metres_x * metres_y)
 
 
 # --------------------------------------------------------------------------
