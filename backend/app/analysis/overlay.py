@@ -14,6 +14,7 @@ def render_overlay(
     mask: np.ndarray | None = None,
     source_size: tuple[int, int] | None = None,
     max_side: int = 1200,
+    masks: list[tuple[np.ndarray, tuple[int, int, int]]] | None = None,
 ) -> Image.Image:
     """
     image:       RGB picture to draw on (any resolution).
@@ -21,6 +22,8 @@ def render_overlay(
     mask:        boolean array (any resolution) covering the full image.
     source_size: (width, height) the box coordinates refer to; defaults to
                  the size of `image`.
+    masks:       [(mask, (r, g, b))] to tint several masks in different
+                 colours; drawn after `mask`.
     """
 
     canvas = image.convert("RGB")
@@ -28,16 +31,28 @@ def render_overlay(
     width, height = canvas.size
     source_width, source_height = source_size or image.size
 
-    if mask is not None and mask.any():
-        resized = Image.fromarray(mask.astype("uint8") * 255).resize(
+    layers = [(mask, MASK_COLOUR)] if mask is not None else []
+    layers.extend(masks or [])
+
+    pixels = None
+
+    for layer, colour in layers:
+        if layer is None or not layer.any():
+            continue
+
+        if pixels is None:
+            pixels = np.asarray(canvas, dtype="float32").copy()
+
+        resized = Image.fromarray(layer.astype("uint8") * 255).resize(
             (width, height), Image.NEAREST
         )
         selected = np.asarray(resized) > 0
-        pixels = np.asarray(canvas, dtype="float32")
         pixels[selected] = (
             (1 - MASK_ALPHA) * pixels[selected]
-            + MASK_ALPHA * np.array(MASK_COLOUR, dtype="float32")
+            + MASK_ALPHA * np.array(colour, dtype="float32")
         )
+
+    if pixels is not None:
         canvas = Image.fromarray(pixels.astype("uint8"))
 
     if boxes:

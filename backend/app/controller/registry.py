@@ -15,6 +15,7 @@ from backend.app.models.params import (
     ChangeParams,
     GroundingParams,
     NoParams,
+    SARParams,
     ToolParams,
     VQAParams,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "ChangeParams",
     "GroundingParams",
     "NoParams",
+    "SARParams",
     "SpecialistResult",
     "ToolParams",
     "ToolSpec",
@@ -113,11 +115,16 @@ register_tool(
 
 register_tool(
     ToolSpec(
-        name="sar-fusion",
+        name="sar-analysis",
         task=TaskType.SAR,
-        description="SAR interpretation and optical-SAR fusion.",
-        params_model=NoParams,
-        runner=lambda q, a, b, p: run_sar(query=q, image_id=a, image_id_2=b),
+        description=(
+            "SAR water-like surface mapping, bright target detection and "
+            "optical-SAR cross-check."
+        ),
+        params_model=SARParams,
+        runner=lambda q, a, b, p: run_sar(
+            query=q, image_id=a, image_id_2=b, params=p
+        ),
     )
 )
 
