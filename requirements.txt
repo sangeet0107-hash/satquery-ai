@@ -3,4 +3,9 @@ uvicorn
 rasterio
 numpy
 pillow
+scipy
 python-multipart
+torch
+transformers
+pytest
+httpx

@@ -2,7 +2,7 @@ import rasterio
 import numpy as np
 from rasterio.transform import from_origin
 
-from app.ingestion.raster import inspect_raster, create_preview
+from backend.app.ingestion.raster import inspect_raster, create_preview
 
 
 # Create a tiny 10x10 GeoTIFF

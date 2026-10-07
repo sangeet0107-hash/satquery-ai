@@ -1,71 +1,11 @@
-import os
-
-import numpy as np
-import rasterio
-import torch
-from PIL import Image
-from transformers import BlipForQuestionAnswering, BlipProcessor
-
+from backend.app.ingestion.store import resolve_upload_path
 from backend.app.models.query import ExecutionStep
 
 
-UPLOAD_DIR = "uploads"
 MODEL_NAME = "Salesforce/blip-vqa-base"
 
 _processor = None
 _model = None
-
-
-def _resolve_image_path(image_id: str | None) -> str | None:
-    """Resolve the uploaded image filename to a file in uploads/."""
-
-    if not image_id:
-        return None
-
-    filename = os.path.basename(image_id)
-    image_path = os.path.join(UPLOAD_DIR, filename)
-
-    if os.path.exists(image_path):
-        return image_path
-
-    return None
-
-
-def _load_raster_as_rgb(image_path: str) -> Image.Image:
-    """
-    Load the first raster band from a GeoTIFF and convert it
-    into an RGB PIL image suitable for BLIP.
-    """
-
-    with rasterio.open(image_path) as src:
-        band = src.read(1).astype(np.float32)
-
-    # Remove invalid values.
-    valid = np.isfinite(band)
-
-    if not np.any(valid):
-        raise ValueError("The raster contains no valid pixel values.")
-
-    valid_pixels = band[valid]
-
-    low = np.percentile(valid_pixels, 2)
-    high = np.percentile(valid_pixels, 98)
-
-    if high <= low:
-        high = low + 1.0
-
-    normalized = (band - low) / (high - low)
-    normalized = np.clip(normalized, 0, 1)
-
-    image_8bit = (normalized * 255).astype(np.uint8)
-
-    # BLIP expects RGB.
-    rgb_array = np.stack(
-        [image_8bit, image_8bit, image_8bit],
-        axis=-1,
-    )
-
-    return Image.fromarray(rgb_array, mode="RGB")
 
 
 def _load_model():
@@ -73,6 +13,10 @@ def _load_model():
 
     global _processor
     global _model
+
+    # Imported lazily so the API starts (and tests run) without loading
+    # the heavy ML stack until a VQA request actually needs it.
+    from transformers import BlipForQuestionAnswering, BlipProcessor
 
     if _processor is None or _model is None:
         _processor = BlipProcessor.from_pretrained(MODEL_NAME)
@@ -90,6 +34,7 @@ def _load_model():
 def run_vqa(
     query: str,
     image_id: str | None = None,
+    max_new_tokens: int = 30,
 ) -> tuple[str, float, list[ExecutionStep]]:
 
     trace = [
@@ -99,7 +44,7 @@ def run_vqa(
         )
     ]
 
-    image_path = _resolve_image_path(image_id)
+    image_path = resolve_upload_path(image_id)
 
     if image_path is None:
         trace.append(
@@ -124,7 +69,9 @@ def run_vqa(
     )
 
     try:
-        image = _load_raster_as_rgb(image_path)
+        from backend.app.ingestion.raster import load_rgb_image
+
+        image = load_rgb_image(image_path)
 
         trace.append(
             ExecutionStep(
@@ -157,13 +104,17 @@ def run_vqa(
             ExecutionStep(
                 step="VQA model execution",
                 status="running",
+                tool=MODEL_NAME,
+                params={"max_new_tokens": max_new_tokens, "device": "cpu"},
             )
         )
+
+        import torch
 
         with torch.no_grad():
             output = model.generate(
                 **inputs,
-                max_new_tokens=30,
+                max_new_tokens=max_new_tokens,
             )
 
         answer = processor.decode(
@@ -177,6 +128,8 @@ def run_vqa(
         trace[-1] = ExecutionStep(
             step="VQA model execution",
             status="complete",
+            tool=MODEL_NAME,
+            params={"max_new_tokens": max_new_tokens, "device": "cpu"},
         )
 
         trace.append(
